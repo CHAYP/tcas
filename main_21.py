@@ -55,7 +55,7 @@ def load(file_dir):
                     course_map[i["_id"]][f"receive_{j}"] = 9999999
 
             if i["join_id"]:
-                join_id = i["university_id"] + i["join_id"]
+                join_id = make_join_id(i)
                 if not join_amount.get(join_id):
                     join_amount[join_id] = []
                 join_amount[join_id].append(i["_id"])
@@ -80,8 +80,8 @@ def load(file_dir):
                 std_map[line["citizen_id"]] = []
 
             try:
-                line["score"] = -float(line["score"])
-                line["ranking"] = float(line["ranking"])
+                line["score"] = float(line["score"])
+                line["ranking"] = -float(line["ranking"])
             except:
                 print("error", line)
                 exit()
@@ -133,13 +133,15 @@ def unmark(mark, std_id):
 def comp_global(std, course, mark, num=0):
     # return true if std was add to heap array, kick list
     kicks = []
+    std_score = std["ranking"] if std["type"][1] == "1" else std["score"]
+    std_score -= score_offset
     if is_debug_id(std["citizen_id"]):
-        print("DB", course["_id"], std["score"], course[f"min_{num}"], num)
+        print("DB", course["_id"], std_score, course[f"min_{num}"], num)
 
-    if course[f"min_{num}"] is False or std["score"] > course[f"min_{num}"]:
+    if course[f"min_{num}"] is False or std_score > course[f"min_{num}"]:
         if is_debug_id(std["citizen_id"]):
             print("DBX")
-        add_std(course, std["score"], std["citizen_id"], mark, num)
+        add_std(course, std_score, std["citizen_id"], mark, num)
         kicks = cmp(
             course[f"heap_{num}"], course[f"receive_{num}"], course["receive_add_limit"]
         )
@@ -226,10 +228,14 @@ def add(std_id, std_list, mark):
     std = std_list[mark[std_id][1]]
     course = course_map[std["round_id"]]
     if course["join_id"]:
-        join_id = course["university_id"] + course["join_id"]
+        join_id = make_join_id(course)
         course = course_map[join_amount[join_id][0]]
     kick = comp_new(std, course, mark)
     return kick
+
+
+def make_join_id(course):
+    return course["university_id"] + course["join_id"] + course["type"]
 
 
 def solve(course_map, std_map, mark):
@@ -269,15 +275,19 @@ if __name__ == "__main__":
 
     course_map, join_amount, enroll_map, std_map, accept_raw, header = load(file_dir)
 
+    score_offset = 0
     mark = {}
     # mark = [bool, num] => [pass status, piority pointer]
     for key, val in std_map.items():
         val.sort(key=lambda x: enroll_map[x["citizen_id"]][x["round_id"]])
         mark[key] = [False, 0]
 
-    debug_id = "1500101122555"
-    debug_course = "5de4c04ad01dc4a664f84d62"
+    debug_id = "7497689157677"
+    debug_course = "602b81cced347e0ff0262bd2"
     # debug_mode = True
+
+    balance = True
+    # balance = False
 
     balancing = True
     while balancing:
@@ -285,6 +295,8 @@ if __name__ == "__main__":
         # reset
         for key, val in std_map.items():
             mark[key] = [False, 0]
+            # if not mark[key]:
+            #     mark[key] = [False, 0]
 
         for key, val in course_map.items():
             for j in recieve_type:
@@ -295,6 +307,9 @@ if __name__ == "__main__":
         overflow = {}
 
         solve(course_map, std_map, mark)
+
+        if not balance:
+            break
 
         for key, val in course_map.items():
             if len(val["heap_0"]) > val["receive_0"]:
@@ -317,16 +332,20 @@ if __name__ == "__main__":
 
         for key, val in program.items():
             if val[0] != 0 and val[1] != 0:
+                if val[0][3] == "5fc7100447d79dc41d05a433":
+                    print(val)
                 cond = 1 if overflow.get(val[0][3], False) else 0
                 cond += 1 if overflow.get(val[1][3], False) else 0
                 if cond == 1:
-                    print(val)
+                    # print(val)
                     for i in range(2):
                         if not overflow.get(val[i][3], False):
                             ext = max(0, val[i][1] - val[i][0])
                             balancing |= ext > 0
                             course_map[val[i][3]]["receive_0"] -= ext
                             course_map[val[(i + 1) % 2][3]]["receive_0"] += ext
+
+        # score_offset += 1000000
 
         # if val[0] != 0 and val[1] != 0:
         #     if overflow.get(val[0][3]) or overflow.get(val[1][3]):
@@ -340,8 +359,17 @@ if __name__ == "__main__":
         #     print(key, val)
 
         # debug in first round noly
-        if debug_mode:
-            break
+        # if debug_mode:
+        #     break
+
+    # fuck = course_map["602cd9f0e8e0b19386dc011f"]
+    # fuck = course_map["602cd9f0e8e0b19386dc0120"]
+    # fuck = course_map["602cd9f0e8e0b19386dc0121"]
+    # fuck = course_map["602cd9f0e8e0b19386dc0122"]
+    # fuck = course_map["602cd9f0e8e0b19386dc0123"]
+    # fuck = course_map["602cd9f0e8e0b19386dc0124"]
+    # fuck = course_map["602cd9f0e8e0b19386dc0125"]
+    # print(len(fuck["heap_0"]), fuck["receive_0"])
 
     if debug_mode:
         print(mark[debug_id])
@@ -351,9 +379,11 @@ if __name__ == "__main__":
         # print(join_amount[course_map[debug_course]
         #                   ['university_id']+course_map[debug_course]['join_id']])
 
+    # 602cd9f0e8e0b19386dc011f
+
     print(",".join(header))
-    output_file = "chay-test.csv"
-    # output_file = "chay-test-no.csv"
+    output_file = "chay-test.csv" if balance else "chay-test-no.csv"
+    print(f"writed in {output_file}")
     # id_order = 7
     id_order = 1
     course_order = 5
