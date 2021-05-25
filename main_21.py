@@ -5,13 +5,19 @@ from cmp import cmp
 
 debug_mode = False
 
-# recieve_type = ['formal','international','vocational','nonformal','male','female']
-recieve_type = [0, 1, 2, 3, 4, 11, 12]
+# receive_type = ['formal','international','vocational','nonformal','male','female']
+receive_type = [0, 1, 2, 3, 4, 11, 12]
 
 
 def load(file_dir):
-    course_file = "round-admission.csv"
-    accept_file = "student-tcas64-07may-randomized.csv"
+    # course_file = "round_21may-8371rows.csv"
+    course_file = "round_25may-8371rows.csv"
+    # accept_file = "student_21may-775926rows-randomized.csv"
+    # accept_file = "21may-output-no-adjustment-randomized-jittat-1.csv"
+    # accept_file = "21may-output-randomized-jittat-1.csv"
+    # accept_file = "student_25may-775926rows-randomized.csv"
+    # accept_file = "25may-output-randomized-jittat-2.csv"
+    accept_file = "result-update-round-1.csv"
 
     with open(f"{file_dir}/{course_file}", "r", encoding="utf-8-sig") as course_file:
         course_list = csv.DictReader(course_file)
@@ -20,7 +26,7 @@ def load(file_dir):
         for i in course_list:
             course_map[i["_id"]] = i
 
-            for j in recieve_type:
+            for j in receive_type:
                 course_map[i["_id"]][f"amount_{j}"] = 0
                 course_map[i["_id"]][f"heap_{j}"] = []
                 course_map[i["_id"]][f"min_{j}"] = False
@@ -50,7 +56,7 @@ def load(file_dir):
             )
 
             # receive 0 is mean no limit
-            for j in recieve_type:
+            for j in receive_type:
                 if course_map[i["_id"]][f"receive_{j}"] == 0:
                     course_map[i["_id"]][f"receive_{j}"] = 9999999
 
@@ -116,25 +122,53 @@ def rem_in_plan(course, num, std_id):
 
 
 def rem_all_plan(course, std_id):
-    for i in recieve_type:
+    for i in receive_type:
         rem_in_plan(course, i, std_id)
 
+def get_course(course):
+    if course["join_id"]:
+        join_id = make_join_id(course)
+        return course_map[join_amount[join_id][0]]
+    return course
+
+def get_course_by_id(id):
+    return get_course(course_map[id])
+
+def add_kicked(mark, std_id):
+    std = std_map[std_id][mark[std_id][1]]
+    round_id = std["round_id"]
+    course = get_course_by_id(round_id)
+    if course['type'][1] != '2': return False
+    kicked_id = make_balance_id(course)
+    score = get_std_score(std)
+    if kicked_id not in kicked:
+        kicked[kicked_id] = []
+    kicked[kicked_id].append((score, (std_id, mark[std_id][1], course['_id'])))
+
+def get_std_score(std):
+    return std["ranking"] if std["type"][1] == "1" else std["score"] 
 
 def unmark(mark, std_id):
     if is_debug_id(std_id):
         print("#kick ", mark[std_id])
 
-    overflow[std_map[std_id][mark[std_id][1]]["round_id"]] = True
+    overflow[get_course_by_id(std_map[std_id][mark[std_id][1]]["round_id"])["_id"]] = True
+    add_kicked(mark, std_id)
 
     mark[std_id][0] = False
     mark[std_id][1] += 1
 
+    if is_debug_id(std_id):
+        print("#kick2 ", mark[std_id])
 
 def comp_global(std, course, mark, num=0):
     # return true if std was add to heap array, kick list
     kicks = []
-    std_score = std["ranking"] if std["type"][1] == "1" else std["score"]
+    std_score = get_std_score(std)
     std_score -= score_offset
+    if float_equal(std_score,0): 
+        if std["type"][1] == "1":
+            return False, []
     if is_debug_id(std["citizen_id"]):
         print("DB", course["_id"], std_score, course[f"min_{num}"], num)
 
@@ -152,16 +186,14 @@ def comp_global(std, course, mark, num=0):
 
     return False, []
 
+def float_equal(a,b):
+    return abs(a-b) <= 0.000001
 
 def comp_new(std, course, mark):
     # when someone kicked return 1 and return 0 otherwise
     # kick by mark[id] = (is_ok, order)
     # is_ok false mean need to compare order
     # order++ to next order
-
-    # if std['score'] == 0:
-    #     unmark(mark, std['citizen_id'])
-    #     return 1
 
     num = int(std["school_program"])
     if course["receive_11"] > 0 and course["receive_11"] != 9999999:
@@ -223,6 +255,8 @@ def comp_new(std, course, mark):
 
 
 def add(std_id, std_list, mark):
+    if is_debug_id(std_id):
+        print('#new',mark[std_id])
     if len(std_list) <= mark[std_id][1]:
         return False
     std = std_list[mark[std_id][1]]
@@ -237,11 +271,18 @@ def add(std_id, std_list, mark):
 def make_join_id(course):
     return course["university_id"] + course["join_id"] + course["type"]
 
+def make_balance_id(course):
+    if course["join_id"]:
+        course = course_map[join_amount[make_join_id(course)][0]]
+        return course["program_id"]+course["major_id"]+course["university_id"]+course["join_id"]
+        # return make_join_id(course)
+    return course["program_id"]+course["major_id"]+course["university_id"]
 
 def solve(course_map, std_map, mark):
     change = True
     t = 0
-    while change:
+    for i in range(100):
+    # while change:
         change = False
         x = 0
         for std_id, std_list in std_map.items():
@@ -268,6 +309,94 @@ def is_debug_id(std_id):
 def is_debug_course(course_id):
     return debug_mode and course_id == debug_course
 
+def sum_empty(programs):
+    ret = 0
+    backup = []
+    for i in programs:
+        if not i['overflow']:
+            amount = max(0,i['receive']-i['amount'])
+            ret += amount
+            course_map[i['id']]['receive_0'] -= amount
+            backup.append((i['id'], i['receive']))
+    return ret,backup
+
+def can_recv(program):
+    return program['overflow'] and program['limit'] == 'A'
+
+def inc_recv(program, amount):
+    course_map[program['id']]['receive_0'] += amount    
+
+def adj_a(empty, programs):
+    if empty == 0: return False
+    programs.sort(key=lambda x: x['id'])
+    give_programs = sum([1 for i in programs if can_recv(i)])
+    if give_programs == 0: return False
+    give_amount = int(empty/give_programs)
+    j = 0
+    for i in programs:
+        if can_recv(i):
+            inc_recv(i, give_amount+int(j<empty%give_programs))
+            j+=1
+    return j>0
+
+def adj_b(empty, programs, balance_id):
+    if empty == 0: return False
+    kicked.get(balance_id,[]).sort(reverse=True)
+    j = 0
+    dup = {}
+    for i in kicked.get(balance_id,[]):
+        if j>= empty: break
+        if i[1][2] not in dup:
+            dup[i[1][2]] = 0
+        dup[i[1][2]]+=1
+        j+=1
+
+    # print(dup)
+    is_adj = False
+    for course_id, amount in dup.items():
+        for program in programs:
+            if program['id'] == course_id:
+                if can_recv(program):
+                    if j<empty:
+                        amount+=empty-j
+                        j=empty
+                    inc_recv(program, amount)
+                    is_adj = True
+                    break
+
+    if balance_id == make_balance_id(get_course_by_id('602e1f46ed347e0ff026a663')):
+        print(balance_id)
+        print(kicked.get(balance_id,[]))
+    return is_adj
+
+
+def balancer(info, balance_id):
+    # in 61
+    empty_a, backup_a = sum_empty(info[0])
+    is_adj_a = adj_a(empty_a, info[0])
+    # print(empty_a, is_adj_a)
+    # in 62
+    empty_b, backup_b = sum_empty(info[1])
+    is_adj_b = adj_b(empty_b, info[1], balance_id)
+
+    if not is_adj_a:
+        is_adj_a_to_b = adj_b(empty_a, info[1], balance_id)
+        if not is_adj_a_to_b:
+            for i in backup_a: # (id, reveive_0)
+                course_map[i[0]]['receive_0'] = i[1]
+            # return to itself
+
+    if not is_adj_b:
+        is_adj_b_to_a = adj_a(empty_b, info[0])
+        if not is_adj_b_to_a:
+            for i in backup_b: # (id, reveive_0)
+                course_map[i[0]]['receive_0'] = i[1]
+
+    if info[1] and info[1][0]['id'] == "602e1f46ed347e0ff026a663":
+        print(is_adj_a,is_adj_b,is_adj_a_to_b,is_adj_b_to_a)
+    
+
+    return is_adj_a or is_adj_b or is_adj_a_to_b or is_adj_b_to_a
 
 if __name__ == "__main__":
 
@@ -282,8 +411,8 @@ if __name__ == "__main__":
         val.sort(key=lambda x: enroll_map[x["citizen_id"]][x["round_id"]])
         mark[key] = [False, 0]
 
-    debug_id = "7497689157677"
-    debug_course = "602b81cced347e0ff0262bd2"
+    debug_id = "4241681226522"
+    debug_course = "5fc7100447d79dc41d05a45f"
     # debug_mode = True
 
     balance = True
@@ -299,12 +428,13 @@ if __name__ == "__main__":
             #     mark[key] = [False, 0]
 
         for key, val in course_map.items():
-            for j in recieve_type:
+            for j in receive_type:
                 val[f"amount_{j}"] = 0
                 val[f"heap_{j}"] = []
                 val[f"min_{j}"] = False
 
         overflow = {}
+        kicked = {}
 
         solve(course_map, std_map, mark)
 
@@ -317,33 +447,55 @@ if __name__ == "__main__":
 
         program = {}
         for key, val in course_map.items():
-            if not program.get(val["program_id"]):
-                program[val["program_id"]] = [0, 0]
-            program[val["program_id"]][int(val["type"][1]) - 1] = (
-                val["amount_0"],
-                val["receive_0"],
-                val["receive_add_limit"],
-                val["_id"],
-                overflow.get(val["_id"], False),
-            )
+            if val['join_id']:
+                # continue
+                # dont adj with join
+                if val['_id'] != join_amount[make_join_id(val)][0]:
+                    continue
+                val = course_map[join_amount[make_join_id(val)][0]]
+            _id = make_balance_id(val)
+            if not program.get(_id):
+                program[_id] = [[], []]
+            program[_id][int(val["type"][1]) - 1].append({
+                # 'amount': val["amount_0"],
+                'amount': len(val["heap_0"]),
+                'receive': val["receive_0"],
+                'limit': val["receive_add_limit"],
+                'id': val["_id"],
+                'overflow': overflow.get(val["_id"], False),
+            })
 
-        # print(overflow)
+        # print(program)
         balancing = False
 
+        debug_balance_id = make_balance_id(course_map['602e1f46ed347e0ff026a663'])
+        # debug_balance_id = make_balance_id(course_map['602e1f46ed347e0ff026a664'])
+        
+        
+        print(program[debug_balance_id])
         for key, val in program.items():
-            if val[0] != 0 and val[1] != 0:
-                if val[0][3] == "5fc7100447d79dc41d05a433":
-                    print(val)
-                cond = 1 if overflow.get(val[0][3], False) else 0
-                cond += 1 if overflow.get(val[1][3], False) else 0
-                if cond == 1:
+            if len(val[0]) > 0 or len(val[1]) > 0:
+                condA = 1 if sum([overflow.get(i['id'], False)==False for i in val[0]]) else 0
+                condB = 1 if sum([overflow.get(i['id'], False)==False for i in val[1]]) else 0
+                if condA or condB:
+                    # print(condA, condB)
                     # print(val)
-                    for i in range(2):
-                        if not overflow.get(val[i][3], False):
-                            ext = max(0, val[i][1] - val[i][0])
-                            balancing |= ext > 0
-                            course_map[val[i][3]]["receive_0"] -= ext
-                            course_map[val[(i + 1) % 2][3]]["receive_0"] += ext
+                    balancing |= balancer(val, key)
+                    # print('>', val)
+                if key == debug_balance_id:
+                    print(val)
+                    print('31', [course_map[i['id']]['receive_0'] for i in val[0]])
+                    print('32', [course_map[i['id']]['receive_0'] for i in val[1]])
+                #     break
+                    # for i in range(2):
+                    #     if not overflow.get(val[i][3], False):
+                    #         ext = max(0, val[i][1] - val[i][0])
+                    #         balancing |= ext > 0
+                    #         course_map[val[i][3]]["receive_0"] -= ext
+                    #         course_map[val[(i + 1) % 2][3]]["receive_0"] += ext
+        
+
+        # break
 
         # score_offset += 1000000
 
@@ -413,6 +565,7 @@ if __name__ == "__main__":
             # print(','.join([str(j) for j in i]))
 
     if not debug_mode:
+        # pass
         with open(output_file, "w") as csvfile:
             csvwriter = csv.writer(csvfile)
             csvwriter.writerow(header)
